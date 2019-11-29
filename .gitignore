@@ -1,0 +1,6 @@
+.DS_Store
+include/
+lib/
+test/
+platformio.ini
+*.sublime-workspace
