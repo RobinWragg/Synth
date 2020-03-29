@@ -3,8 +3,8 @@
 #define PIN_SS1 2
 #define PIN_SS2 3
 #define PIN_SS3 4
-#define PIN_KEY_READ 5 // temp
-#define PIN_POWER_LED 13 // temp
+#define PIN_KEY_READ 5
+#define PIN_POWER_LED 13
 #define PIN_KNOB_0 A0
 #define PIN_KNOB_1 A1
 #define PIN_KNOB_2 A2
@@ -15,7 +15,7 @@
 #define PIN_KNOB_7 A7
 #define PIN_AUDIO_OUT A21
 
-#define BASE_OCTAVE (4)
+#define BASE_OCTAVE (2)
 #define M_TAU (6.283185307179586)
 
 const int keyCount = 32;
@@ -23,7 +23,11 @@ const int keyCount = 32;
 struct {
   bool isDown;
 } keys[keyCount];
+
+unsigned short knobs[8];
+
 unsigned long timeNow;
+unsigned long timePrev;
 
 void setup() {
   pinMode(PIN_POWER_LED, OUTPUT);
@@ -37,7 +41,7 @@ void setup() {
   pinMode(PIN_SS2, OUTPUT);
   pinMode(PIN_SS3, OUTPUT);
   
-  pinMode(PIN_KEY_READ, INPUT);
+  pinMode(PIN_KEY_READ, INPUT_PULLDOWN);
   
   pinMode(PIN_KNOB_0, INPUT);
   pinMode(PIN_KNOB_1, INPUT);
@@ -74,7 +78,7 @@ float keyIndexToFreq(int key) {
   int freqIndex = key % notesPerOctave;
   int octave = BASE_OCTAVE + (key / notesPerOctave);
   
-  return freqs[freqIndex] * pow(2, octave);
+  return freqs[freqIndex] * powf(2, octave);
 }
 
 void updateKeyState() {
@@ -85,7 +89,23 @@ void updateKeyState() {
   
   keys[keyIndex].isDown = digitalRead(PIN_KEY_READ) == HIGH;
   
-  if (++keyIndex >= 32) keyIndex = 0;
+  if (++keyIndex >= 32) {
+    keyIndex = 0;
+    static int knobIndex = 0;
+    
+    switch (knobIndex) {
+      case 0: knobs[knobIndex] = analogRead(PIN_KNOB_0); break;
+      case 1: knobs[knobIndex] = analogRead(PIN_KNOB_1); break;
+      case 2: knobs[knobIndex] = analogRead(PIN_KNOB_2); break;
+      case 3: knobs[knobIndex] = analogRead(PIN_KNOB_3); break;
+      case 4: knobs[knobIndex] = analogRead(PIN_KNOB_4); break;
+      case 5: knobs[knobIndex] = analogRead(PIN_KNOB_5); break;
+      case 6: knobs[knobIndex] = analogRead(PIN_KNOB_6); break;
+      case 7: knobs[knobIndex] = analogRead(PIN_KNOB_7); break;
+    }
+    
+    if (++knobIndex > 7) knobIndex = 0;
+  }
   
   int SS0Setting = keyIndex & 0x01 ? HIGH : LOW;
   int SS1Setting = keyIndex & 0x02 ? HIGH : LOW;
@@ -103,29 +123,50 @@ void updateKeyState() {
 }
 
 float getOutputSample() {
-  float basePhase = (timeNow % 1000000) / 1000000.0f;
-  float baseAngle = basePhase * M_TAU;
+  unsigned timeDelta = timeNow - timePrev;
+  static unsigned long basePhaseUs = 0;
+  
+  basePhaseUs += timeDelta;
+  float baseAngle = (basePhaseUs / 1000000.0f) * M_TAU;
   
   float summedSamples = 0;
+  unsigned char keyDownCount = 0;
   
   for (int k = 0; k < keyCount; k++) {
     if (keys[k].isDown) {
-      summedSamples += sinf(baseAngle * keyIndexToFreq(k));
-    }
+      float s = sinf(baseAngle * keyIndexToFreq(k));
+      
+      // Apply distortion
+      for (int i = 0; i < knobs[2] / 100; i++) {
+        s = sinf(M_PI * (sinf(s) / 2));
+      }
+      
+      summedSamples += s;
+      keyDownCount++;
+    } else keys[k].vol = 0;
   }
+  
+  if (keyDownCount == 0) basePhaseUs = 0;
   
   return summedSamples;
 }
 
 void loop() {
   timeNow = micros();
+  static int count = 0;
+  
+  // Temporal resolution monitoring
+  // if (count++ > 10000) {
+  //   Serial.println(timeNow - timePrev);
+  //   count = 0;
+  // }
   
   updateKeyState();
   
-  int intSample = 2048 + getOutputSample() * 2048 * 0.9;
+  int intSample = 2048 + getOutputSample() * knobs[0] * 2;
   analogWrite(PIN_AUDIO_OUT, intSample);
   
-  delayMicroseconds(10);
+  timePrev = timeNow;
 }
 
 
