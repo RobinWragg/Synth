@@ -23,7 +23,7 @@ uint32_t timeNow;
 uint32_t timePrev;
 
 struct {
-  bool isDown;
+  bool isDown, isReleasing;
   uint32_t elapsedUs;
 } keys[KEY_COUNT];
 
@@ -67,6 +67,11 @@ void setup() {
   
   pinMode(PIN_AUDIO_OUT, OUTPUT);
   
+  for (int i = 0; i < KEY_COUNT; i++) {
+    keys[i].isDown = false;
+    keys[i].isReleasing = false;
+  }
+  
   Serial.begin(9600);
 }
 
@@ -98,6 +103,7 @@ void calcEnvelope() {
   env.attackDuration = env.attackKnob * env.attackKnob;
   env.decayDuration = env.decayKnob * env.decayKnob;
   env.sustainVolume = env.sustainKnob / 1024.0f;
+  env.releaseDuration = env.releaseKnob * env.releaseKnob;
 }
 
 float getEnvelopeValue(uint8_t keyIndex) {
@@ -122,6 +128,7 @@ void updateKeyState() {
   if (keyIsDown != keys[keyIndex].isDown) {
     keys[keyIndex].elapsedUs = 0;
     keys[keyIndex].isDown = keyIsDown;
+    if (keyIsDown) keys[keyIndex].isReleasing = false;
   }
   
   if (++keyIndex >= 32) {
@@ -171,12 +178,11 @@ float getOutputSample() {
   
   float summedSamples = 0;
   for (int k = 0; k < KEY_COUNT; k++) {
-    if (keys[k].isDown) {
+    if (keys[k].isDown || keys[k].isReleasing) {
       keys[k].elapsedUs += timeDelta;
       
       float s = sinf(baseAngle * keyIndexToFreq(k));
       
-
       // Apply gentle square-wave distortion
       for (int i = 0; i < distortionPassCount; i++) {
         s = sinf(M_PI * (sinf(s) / 2));
