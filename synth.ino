@@ -24,6 +24,7 @@ uint32_t timePrev;
 
 struct {
   bool isDown;
+  uint32_t elapsedUs;
 } keys[KEY_COUNT];
 
 struct Envelope {
@@ -31,6 +32,8 @@ struct Envelope {
   uint16_t decayKnob;
   uint16_t sustainKnob;
   uint16_t releaseKnob;
+  
+  uint32_t attackDuration;
 } env;
 
 uint16_t masterVolume2048 = 0;
@@ -89,11 +92,14 @@ float keyIndexToFreq(int key) {
 }
 
 void calcEnvelope() {
-  
+  env.attackDuration = env.attackKnob * env.attackKnob;
+  // Serial.println(env.attackDuration / 1000000.0f);
 }
 
 float getEnvelopeValue(uint8_t keyIndex) {
-  return 1;
+  if (keys[keyIndex].elapsedUs < env.attackDuration) {
+    return keys[keyIndex].elapsedUs / (float)env.attackDuration;
+  } else return 1;
 }
 
 void updateKeyState() {
@@ -102,7 +108,13 @@ void updateKeyState() {
   
   if (timeNow - lastKeyReadTime < 500) return; // Too soon to read the key
   
-  keys[keyIndex].isDown = digitalRead(PIN_KEY_READ) == HIGH;
+  bool keyIsDown = digitalRead(PIN_KEY_READ) == HIGH;
+  
+  // Reset the note duration timer if the key's state has changed
+  if (keyIsDown != keys[keyIndex].isDown) {
+    keys[keyIndex].elapsedUs = 0;
+    keys[keyIndex].isDown = keyIsDown;
+  }
   
   if (++keyIndex >= 32) {
     keyIndex = 0;
@@ -152,6 +164,8 @@ float getOutputSample() {
   float summedSamples = 0;
   for (int k = 0; k < KEY_COUNT; k++) {
     if (keys[k].isDown) {
+      keys[k].elapsedUs += timeDelta;
+      
       float s = sinf(baseAngle * keyIndexToFreq(k));
       
 
