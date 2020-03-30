@@ -34,6 +34,9 @@ struct Envelope {
   uint16_t releaseKnob;
   
   uint32_t attackDuration;
+  uint32_t decayDuration;
+  float sustainVolume;
+  uint32_t releaseDuration;
 } env;
 
 uint16_t masterVolume2048 = 0;
@@ -93,13 +96,18 @@ float keyIndexToFreq(int key) {
 
 void calcEnvelope() {
   env.attackDuration = env.attackKnob * env.attackKnob;
-  // Serial.println(env.attackDuration / 1000000.0f);
+  env.decayDuration = env.decayKnob * env.decayKnob;
+  env.sustainVolume = env.sustainKnob / 1024.0f;
 }
 
 float getEnvelopeValue(uint8_t keyIndex) {
   if (keys[keyIndex].elapsedUs < env.attackDuration) {
     return keys[keyIndex].elapsedUs / (float)env.attackDuration;
-  } else return 1;
+  } else if (keys[keyIndex].elapsedUs < env.attackDuration + env.decayDuration) {
+    uint32_t elapsedMinusAttack = keys[keyIndex].elapsedUs - env.attackDuration;
+    float lerpInput = elapsedMinusAttack / (float)env.decayDuration;
+    return 1 + lerpInput * (env.sustainVolume - 1);
+  } else return env.sustainVolume;
 }
 
 void updateKeyState() {
