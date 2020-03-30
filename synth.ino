@@ -92,6 +92,10 @@ void calcEnvelope() {
   
 }
 
+float getEnvelopeValue(uint8_t keyIndex) {
+  return 1;
+}
+
 void updateKeyState() {
   static uint32_t lastKeyReadTime = 0;
   static uint8_t keyIndex = 0;
@@ -111,13 +115,14 @@ void updateKeyState() {
       case 3: analogRead(PIN_KNOB_3); break;
       
       // ADSR
-      case 4: env.attackKnob = analogRead(PIN_KNOB_4); calcEnvelope(); break;
-      case 5: env.decayKnob = analogRead(PIN_KNOB_5); calcEnvelope(); break;
-      case 6: env.sustainKnob = analogRead(PIN_KNOB_6); calcEnvelope(); break;
-      case 7: env.releaseKnob = analogRead(PIN_KNOB_7); calcEnvelope(); break;
+      case 4: env.attackKnob = analogRead(PIN_KNOB_4); break;
+      case 5: env.decayKnob = analogRead(PIN_KNOB_5); break;
+      case 6: env.sustainKnob = analogRead(PIN_KNOB_6); break;
+      case 7: env.releaseKnob = analogRead(PIN_KNOB_7); break;
+      case 8: calcEnvelope(); break;
     }
     
-    if (++knobIndex > 7) knobIndex = 0;
+    if (++knobIndex > 8) knobIndex = 0;
   }
   
   int SS0Setting = keyIndex & 0x01 ? HIGH : LOW;
@@ -140,7 +145,7 @@ float getOutputSample() {
   static uint32_t basePhaseUs = 0;
   
   basePhaseUs += timeDelta;
-  if (basePhaseUs > 10000000) basePhaseUs = 0;
+  basePhaseUs &= 0xFFFFFF;
   
   float baseAngle = (basePhaseUs / 1000000.0f) * M_TAU;
   
@@ -148,13 +153,15 @@ float getOutputSample() {
   for (int k = 0; k < KEY_COUNT; k++) {
     if (keys[k].isDown) {
       float s = sinf(baseAngle * keyIndexToFreq(k));
+      
 
       // Apply gentle square-wave distortion
       for (int i = 0; i < distortionPassCount; i++) {
         s = sinf(M_PI * (sinf(s) / 2));
       }
       
-      summedSamples += s;
+      float envValue = getEnvelopeValue(k);
+      summedSamples += s * envValue;
     }
   }
   
