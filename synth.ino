@@ -18,25 +18,25 @@
 #define BASE_OCTAVE (2)
 #define M_TAU (6.283185307179586)
 #define KEY_COUNT 32
+#define RELEASE_DURATION 3000
 
 uint32_t timeNow;
 uint32_t timePrev;
 
 struct {
-  bool isDown, isReleasing;
-  uint32_t elapsedUs;
+  bool isActive, isDown;
+  uint32_t elapsedUs, keyDownDuration;
+  float volume, keyUpVolume;
 } keys[KEY_COUNT];
 
 struct Envelope {
   uint16_t attackKnob;
   uint16_t decayKnob;
   uint16_t sustainKnob;
-  uint16_t releaseKnob;
   
   uint32_t attackDuration;
   uint32_t decayDuration;
   float sustainVolume;
-  uint32_t releaseDuration;
 } env;
 
 uint16_t masterVolume2048 = 0;
@@ -68,8 +68,8 @@ void setup() {
   pinMode(PIN_AUDIO_OUT, OUTPUT);
   
   for (int i = 0; i < KEY_COUNT; i++) {
+    keys[i].isActive = false;
     keys[i].isDown = false;
-    keys[i].isReleasing = false;
   }
   
   Serial.begin(9600);
@@ -103,17 +103,28 @@ void calcEnvelope() {
   env.attackDuration = env.attackKnob * env.attackKnob;
   env.decayDuration = env.decayKnob * env.decayKnob;
   env.sustainVolume = env.sustainKnob / 1024.0f;
-  env.releaseDuration = env.releaseKnob * env.releaseKnob;
 }
 
-float getEnvelopeValue(uint8_t keyIndex) {
-  if (keys[keyIndex].elapsedUs < env.attackDuration) {
-    return keys[keyIndex].elapsedUs / (float)env.attackDuration;
-  } else if (keys[keyIndex].elapsedUs < env.attackDuration + env.decayDuration) {
-    uint32_t elapsedMinusAttack = keys[keyIndex].elapsedUs - env.attackDuration;
-    float lerpInput = elapsedMinusAttack / (float)env.decayDuration;
-    return 1 + lerpInput * (env.sustainVolume - 1);
-  } else return env.sustainVolume;
+void computeKeyEnvelope(uint8_t keyIndex) {
+  if (keys[keyIndex].isDown) {
+    if (keys[keyIndex].elapsedUs < env.attackDuration) {
+      keys[keyIndex].volume = keys[keyIndex].elapsedUs / (float)env.attackDuration;
+    } else if (keys[keyIndex].elapsedUs < env.attackDuration + env.decayDuration) {
+      uint32_t decayElapsed = keys[keyIndex].elapsedUs - env.attackDuration;
+      float lerpInput = decayElapsed / (float)env.decayDuration;
+      keys[keyIndex].volume = 1 + lerpInput * (env.sustainVolume - 1);
+    } else keys[keyIndex].volume = env.sustainVolume;
+  } else {
+    uint32_t releaseElapsed = keys[keyIndex].elapsedUs - keys[keyIndex].keyDownDuration;
+    
+    if (releaseElapsed > RELEASE_DURATION) {
+      keys[keyIndex].isActive = false;
+      keys[keyIndex].volume = 0.0f;
+    } else {
+      float lerpInput = releaseElapsed / (float)RELEASE_DURATION;
+      keys[keyIndex].volume = keys[keyIndex].keyUpVolume - lerpInput * keys[keyIndex].keyUpVolume;
+    }
+  }
 }
 
 void updateKeyState() {
@@ -128,7 +139,11 @@ void updateKeyState() {
   if (keyIsDown != keys[keyIndex].isDown) {
     keys[keyIndex].elapsedUs = 0;
     keys[keyIndex].isDown = keyIsDown;
-    if (keyIsDown) keys[keyIndex].isReleasing = false;
+    if (keyIsDown) keys[keyIndex].isActive = true;
+    else {
+      keys[keyIndex].keyDownDuration = keys[keyIndex].elapsedUs;
+      keys[keyIndex].keyUpVolume = keys[keyIndex].volume;
+    }
   }
   
   if (++keyIndex >= 32) {
@@ -140,12 +155,12 @@ void updateKeyState() {
       case 1: analogRead(PIN_KNOB_1); break;
       case 2: distortionPassCount = analogRead(PIN_KNOB_2) / 100; break;
       case 3: analogRead(PIN_KNOB_3); break;
+      case 4: analogRead(PIN_KNOB_4); break;
       
       // ADSR
-      case 4: env.attackKnob = analogRead(PIN_KNOB_4); break;
-      case 5: env.decayKnob = analogRead(PIN_KNOB_5); break;
-      case 6: env.sustainKnob = analogRead(PIN_KNOB_6); break;
-      case 7: env.releaseKnob = analogRead(PIN_KNOB_7); break;
+      case 5: env.attackKnob = analogRead(PIN_KNOB_5); break;
+      case 6: env.decayKnob = analogRead(PIN_KNOB_6); break;
+      case 7: env.sustainKnob = analogRead(PIN_KNOB_7); break;
       case 8: calcEnvelope(); break;
     }
     
@@ -178,7 +193,7 @@ float getOutputSample() {
   
   float summedSamples = 0;
   for (int k = 0; k < KEY_COUNT; k++) {
-    if (keys[k].isDown || keys[k].isReleasing) {
+    if (keys[k].isActive) {
       keys[k].elapsedUs += timeDelta;
       
       float s = sinf(baseAngle * keyIndexToFreq(k));
@@ -188,8 +203,8 @@ float getOutputSample() {
         s = sinf(M_PI * (sinf(s) / 2));
       }
       
-      float envValue = getEnvelopeValue(k);
-      summedSamples += s * envValue;
+      computeKeyEnvelope(k);
+      summedSamples += s * keys[k].volume;
     }
   }
   
